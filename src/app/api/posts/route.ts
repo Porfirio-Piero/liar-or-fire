@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { posts, users, categories } from "@/lib/db/schema";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 
 // GET /api/posts - Get all posts with filtering
 export async function GET(request: NextRequest) {
@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = parseInt(searchParams.get("offset") || "0");
 
+    // Build base query
     let query = db
       .select({
         id: posts.id,
@@ -36,6 +37,7 @@ export async function GET(request: NextRequest) {
         authorId: users.id,
         authorUsername: users.username,
         authorAvatar: users.avatar,
+        authorDisplayName: users.displayName,
       })
       .from(posts)
       .innerJoin(users, eq(posts.userId, users.id))
@@ -81,7 +83,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { title, description, categoryId, imageUrl, productUrl, price, brand } = body;
+    const { title, description, categoryId, imageUrl, productUrl, price, brand, type } = body;
 
     // Get or create user
     const existingUsers = await db.select().from(users).where(eq(users.clerkId, userId));
@@ -91,6 +93,7 @@ export async function POST(request: NextRequest) {
       const newUsers = await db.insert(users).values({
         clerkId: userId,
         username: `user_${Date.now()}`,
+        displayName: "",
         email: "",
       }).returning();
       user = newUsers[0];
@@ -105,6 +108,7 @@ export async function POST(request: NextRequest) {
       productUrl,
       price,
       brand,
+      type: type || "product",
     }).returning();
 
     return NextResponse.json({ post: newPosts[0] });

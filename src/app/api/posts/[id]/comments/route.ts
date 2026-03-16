@@ -26,6 +26,7 @@ export async function GET(
         authorId: users.id,
         authorUsername: users.username,
         authorAvatar: users.avatar,
+        authorDisplayName: users.displayName,
       })
       .from(comments)
       .innerJoin(users, eq(comments.userId, users.id))
@@ -62,6 +63,7 @@ export async function POST(
       const newUsers = await db.insert(users).values({
         clerkId: userId,
         username: `user_${Date.now()}`,
+        displayName: "",
         email: "",
       }).returning();
       user = newUsers[0];

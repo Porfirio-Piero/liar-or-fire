@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { posts, votes, users } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 type Params = Promise<{ id: string }>;
 
@@ -29,6 +29,7 @@ export async function POST(
       const newUsers = await db.insert(users).values({
         clerkId: userId,
         username: `user_${Date.now()}`,
+        displayName: "",
         email: "",
       }).returning();
       user = newUsers[0];
@@ -38,7 +39,9 @@ export async function POST(
     const existingVotes = await db
       .select()
       .from(votes)
-      .where(and(eq(votes.userId, user.id), eq(votes.postId, id)));
+      .where(eq(votes.userId, user.id));
+
+    const voteForThisPost = existingVotes.find(v => v.postId === id);
 
     // Get current post
     const currentPosts = await db.select().from(posts).where(eq(posts.id, id));
@@ -53,21 +56,19 @@ export async function POST(
     let trashVotes = post.trashVotes ?? 0;
     let totalVotes = post.totalVotes ?? 0;
 
-    const existingVote = existingVotes[0];
-
-    if (existingVote) {
+    if (voteForThisPost) {
       // Remove old vote
-      if (existingVote.voteType === "fire") fireVotes--;
-      else if (existingVote.voteType === "liar") liarVotes--;
-      else if (existingVote.voteType === "trash") trashVotes--;
+      if (voteForThisPost.voteType === "fire") fireVotes--;
+      else if (voteForThisPost.voteType === "liar") liarVotes--;
+      else if (voteForThisPost.voteType === "trash") trashVotes--;
       totalVotes--;
 
       // If same vote type, remove vote entirely
-      if (existingVote.voteType === voteType) {
-        await db.delete(votes).where(eq(votes.id, existingVote.id));
+      if (voteForThisPost.voteType === voteType) {
+        await db.delete(votes).where(eq(votes.id, voteForThisPost.id));
       } else {
         // Update to new vote type
-        await db.update(votes).set({ voteType }).where(eq(votes.id, existingVote.id));
+        await db.update(votes).set({ voteType }).where(eq(votes.id, voteForThisPost.id));
         if (voteType === "fire") fireVotes++;
         else if (voteType === "liar") liarVotes++;
         else if (voteType === "trash") trashVotes++;
