@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { 
   Flame, Pin, Trash2, MessageSquare, Upload, X, CheckCircle2,
   Plus, TrendingUp, Clock, Search, Bell, User,
-  Image as ImageIcon, Link as LinkIcon, Shield, LogOut, Users, BarChart3, FileText
+  Image as ImageIcon, Link as LinkIcon, Shield, LogOut, Users, BarChart3, FileText,
+  Repeat2, Quote, MoreHorizontal, ChevronDown, ChevronUp, Reply, Heart, Share2
 } from 'lucide-react';
 
 // Types
@@ -18,9 +19,10 @@ interface User {
   isAdmin: boolean;
 }
 
-interface Comment {
+interface ThreadComment {
   id: string;
   postId: string;
+  parentId: string | null; // null for top-level, id for nested replies
   authorId: string;
   authorUsername: string;
   content: string;
@@ -28,6 +30,8 @@ interface Comment {
   fireVotes: number;
   liarVotes: number;
   createdAt: string;
+  replies?: ThreadComment[]; // nested replies
+  isCollapsed?: boolean;
 }
 
 interface Post {
@@ -45,14 +49,26 @@ interface Post {
   liarVotes: number;
   trashVotes: number;
   commentCount: number;
+  repostCount: number;
+  quoteCount: number;
   createdAt: string;
   isVerified: boolean;
+  isRepost?: boolean;
+  originalPostId?: string;
+  quoteComment?: string;
 }
 
 interface Vote {
   userId: string;
   postId: string;
   voteType: 'fire' | 'liar' | 'trash';
+}
+
+interface Repost {
+  id: string;
+  userId: string;
+  postId: string;
+  createdAt: string;
 }
 
 // Categories
@@ -77,6 +93,7 @@ const STORAGE_KEYS = {
   posts: 'liar_or_fire_posts',
   comments: 'liar_or_fire_comments',
   votes: 'liar_or_fire_votes',
+  reposts: 'liar_or_fire_reposts',
   currentUser: 'liar_or_fire_current_user',
 };
 
@@ -104,8 +121,9 @@ const ADMIN_PASSWORD = 'liarorfire2024';
 export default function LiarOrFire() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [posts, setPosts] = useState<Post[]>([]);
-  const [comments, setComments] = useState<Comment[]>([]);
+  const [comments, setComments] = useState<ThreadComment[]>([]);
   const [votes, setVotes] = useState<Vote[]>([]);
+  const [reposts, setReposts] = useState<Repost[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortBy, setSortBy] = useState('hot');
   const [searchQuery, setSearchQuery] = useState('');
@@ -125,6 +143,10 @@ export default function LiarOrFire() {
   });
   const [newComment, setNewComment] = useState('');
   const [commentImage, setCommentImage] = useState<string | null>(null);
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [replyContent, setReplyContent] = useState('');
+  const [replyImage, setReplyImage] = useState<string | null>(null);
+  const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
 
   // Load data
   useEffect(() => {
@@ -132,12 +154,14 @@ export default function LiarOrFire() {
     setPosts(loadFromStorage(STORAGE_KEYS.posts, []));
     setComments(loadFromStorage(STORAGE_KEYS.comments, []));
     setVotes(loadFromStorage(STORAGE_KEYS.votes, []));
+    setReposts(loadFromStorage(STORAGE_KEYS.reposts, []));
   }, []);
 
   // Save data
   useEffect(() => { saveToStorage(STORAGE_KEYS.posts, posts); }, [posts]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.comments, comments); }, [comments]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.votes, votes); }, [votes]);
+  useEffect(() => { saveToStorage(STORAGE_KEYS.reposts, reposts); }, [reposts]);
   useEffect(() => { saveToStorage(STORAGE_KEYS.currentUser, currentUser); }, [currentUser]);
 
   // Auth
@@ -209,6 +233,34 @@ export default function LiarOrFire() {
     }
   };
 
+  // Build threaded comments from flat list
+  const buildThreadedComments = (postId: string): ThreadComment[] => {
+    const postComments = comments.filter(c => c.postId === postId);
+    const commentMap = new Map<string, ThreadComment>();
+    const rootComments: ThreadComment[] = [];
+
+    // First pass: create map
+    postComments.forEach(c => {
+      commentMap.set(c.id, { ...c, replies: [], isCollapsed: false });
+    });
+
+    // Second pass: build tree
+    postComments.forEach(c => {
+      const comment = commentMap.get(c.id)!;
+      if (c.parentId) {
+        const parent = commentMap.get(c.parentId);
+        if (parent) {
+          parent.replies = parent.replies || [];
+          parent.replies.push(comment);
+        }
+      } else {
+        rootComments.push(comment);
+      }
+    });
+
+    return rootComments;
+  };
+
   // Posts
   const createPost = () => {
     if (!currentUser) { setShowAuth(true); return; }
@@ -218,7 +270,7 @@ export default function LiarOrFire() {
       title: newPost.title, description: newPost.description, category: newPost.category,
       imageUrl: uploadedImage || undefined, productUrl: newPost.productUrl || undefined,
       price: newPost.price || undefined, brand: newPost.brand || undefined,
-      fireVotes: 0, liarVotes: 0, trashVotes: 0, commentCount: 0,
+      fireVotes: 0, liarVotes: 0, trashVotes: 0, commentCount: 0, repostCount: 0, quoteCount: 0,
       createdAt: new Date().toISOString(), isVerified: false
     };
     setPosts([post, ...posts]);
@@ -231,30 +283,61 @@ export default function LiarOrFire() {
     if (!currentUser) { setShowAuth(true); return; }
     const existingVote = votes.find(v => v.postId === postId && v.userId === currentUser.id);
     
-    if (existingVote) {
+    // If clicking same vote type, remove it (toggle off)
+    if (existingVote && existingVote.voteType === voteType) {
       setVotes(votes.filter(v => !(v.postId === postId && v.userId === currentUser.id)));
-      setPosts(posts.map(p => {
-        if (p.id === postId) {
-          const key = (existingVote.voteType + 'Votes') as keyof Post;
-          const currentValue = p[key] as number;
-          return { ...p, [key]: currentValue - 1 };
-        }
-        return p;
-      }));
-    }
-
-    if (!existingVote || existingVote.voteType !== voteType) {
-      const newVote: Vote = { userId: currentUser.id, postId, voteType };
-      setVotes([...votes, newVote]);
       setPosts(posts.map(p => {
         if (p.id === postId) {
           const key = (voteType + 'Votes') as keyof Post;
           const currentValue = p[key] as number;
-          return { ...p, [key]: currentValue + 1 };
+          return { ...p, [key]: Math.max(0, currentValue - 1) };
+        }
+        return p;
+      }));
+      return;
+    }
+
+    // Remove existing vote if different type
+    if (existingVote) {
+      setVotes(votes.filter(v => !(v.postId === postId && v.userId === currentUser.id)));
+      setPosts(posts.map(p => {
+        if (p.id === postId) {
+          const oldKey = (existingVote.voteType + 'Votes') as keyof Post;
+          const oldValue = p[oldKey] as number;
+          return { ...p, [oldKey]: Math.max(0, oldValue - 1), [voteType + 'Votes']: (p[voteType + 'Votes' as keyof Post] as number) + 1 };
+        }
+        return p;
+      }));
+    } else {
+      // Add new vote
+      const newVote: Vote = { userId: currentUser.id, postId, voteType };
+      setVotes([...votes, newVote]);
+      setPosts(posts.map(p => {
+        if (p.id === postId) {
+          return { ...p, [voteType + 'Votes']: p[voteType + 'Votes' as keyof Post] as number + 1 };
         }
         return p;
       }));
     }
+  };
+
+  const handleRepost = (postId: string) => {
+    if (!currentUser) { setShowAuth(true); return; }
+    const existingRepost = reposts.find(r => r.postId === postId && r.userId === currentUser.id);
+    if (existingRepost) {
+      // Undo repost
+      setReposts(reposts.filter(r => !(r.postId === postId && r.userId === currentUser.id)));
+      setPosts(posts.map(p => p.id === postId ? { ...p, repostCount: Math.max(0, p.repostCount - 1) } : p));
+    } else {
+      const newRepost: Repost = { id: generateId(), userId: currentUser.id, postId, createdAt: new Date().toISOString() };
+      setReposts([...reposts, newRepost]);
+      setPosts(posts.map(p => p.id === postId ? { ...p, repostCount: p.repostCount + 1 } : p));
+    }
+  };
+
+  const hasReposted = (postId: string): boolean => {
+    if (!currentUser) return false;
+    return reposts.some(r => r.postId === postId && r.userId === currentUser.id);
   };
 
   const getUserVote = (postId: string): 'fire' | 'liar' | 'trash' | null => {
@@ -263,31 +346,152 @@ export default function LiarOrFire() {
     return vote?.voteType || null;
   };
 
-  // Comments
-  const addComment = () => {
+  // Threaded comments
+  const addThreadComment = (parentId: string | null = null) => {
     if (!currentUser) { setShowAuth(true); return; }
-    if (!selectedPost || !newComment.trim()) return;
-    const comment: Comment = {
-      id: generateId(), postId: selectedPost.id, authorId: currentUser.id, authorUsername: currentUser.username,
-      content: newComment, imageUrl: commentImage || undefined, fireVotes: 0, liarVotes: 0,
-      createdAt: new Date().toISOString()
+    if (!selectedPost) return;
+    const content = parentId ? replyContent : newComment;
+    if (!content.trim()) return;
+
+    const comment: ThreadComment = {
+      id: generateId(), postId: selectedPost.id, parentId,
+      authorId: currentUser.id, authorUsername: currentUser.username,
+      content, imageUrl: parentId ? replyImage || undefined : commentImage || undefined,
+      fireVotes: 0, liarVotes: 0, createdAt: new Date().toISOString()
     };
+
     setComments([comment, ...comments]);
     setPosts(posts.map(p => p.id === selectedPost.id ? { ...p, commentCount: p.commentCount + 1 } : p));
-    setNewComment('');
-    setCommentImage(null);
+    
+    if (parentId) {
+      setReplyContent('');
+      setReplyImage(null);
+      setReplyingTo(null);
+    } else {
+      setNewComment('');
+      setCommentImage(null);
+    }
   };
 
   const handleCommentVote = (commentId: string, voteType: 'fire' | 'liar') => {
     if (!currentUser) { setShowAuth(true); return; }
     setComments(comments.map(c => {
       if (c.id === commentId) {
-        const key = (voteType + 'Votes') as keyof Comment;
-        const currentValue = c[key] as number;
-        return { ...c, [key]: currentValue + 1 };
+        return { ...c, [voteType + 'Votes']: c[voteType + 'Votes' as keyof ThreadComment] as number + 1 };
       }
       return c;
     }));
+  };
+
+  const toggleThread = (commentId: string) => {
+    setExpandedThreads(prev => {
+      const next = new Set(prev);
+      if (next.has(commentId)) {
+        next.delete(commentId);
+      } else {
+        next.add(commentId);
+      }
+      return next;
+    });
+  };
+
+  // Render nested comments recursively
+  const renderComment = (comment: ThreadComment, depth: number = 0): React.ReactNode => {
+    const isExpanded = expandedThreads.has(comment.id);
+    const hasReplies = comment.replies && comment.replies.length > 0;
+    const maxWidth = Math.max(600 - depth * 40, 300);
+
+    return (
+      <div key={comment.id} className={`${depth > 0 ? 'ml-6 border-l-2 border-zinc-700 pl-4' : ''}`}>
+        <div className="bg-zinc-800/50 rounded-xl p-4 mb-3" style={{ maxWidth: `${maxWidth}px` }}>
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-pink-500 flex items-center justify-center text-sm font-bold">
+              {comment.authorUsername[0].toUpperCase()}
+            </div>
+            <span className="font-medium">u/{comment.authorUsername}</span>
+            <span className="text-zinc-500 text-xs">•</span>
+            <span className="text-zinc-500 text-xs">{formatDate(comment.createdAt)}</span>
+          </div>
+          
+          <p className="text-zinc-300 mb-3">{comment.content}</p>
+          
+          {comment.imageUrl && (
+            <img src={comment.imageUrl} alt="Comment" className="max-w-full rounded-lg mb-3" />
+          )}
+          
+          <div className="flex items-center gap-4 text-sm">
+            <button onClick={() => handleCommentVote(comment.id, 'fire')}
+              className="flex items-center gap-1 text-zinc-500 hover:text-orange-400">
+              <Flame className="h-4 w-4" /> {comment.fireVotes}
+            </button>
+            <button onClick={() => handleCommentVote(comment.id, 'liar')}
+              className="flex items-center gap-1 text-zinc-500 hover:text-red-400">
+              <Pin className="h-4 w-4" /> {comment.liarVotes}
+            </button>
+            {depth < 3 && (
+              <button onClick={() => setReplyingTo(replyingTo === comment.id ? null : comment.id)}
+                className="flex items-center gap-1 text-zinc-500 hover:text-white">
+                <Reply className="h-4 w-4" /> Reply
+              </button>
+            )}
+            {hasReplies && (
+              <button onClick={() => toggleThread(comment.id)}
+                className="flex items-center gap-1 text-zinc-500 hover:text-white">
+                {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {comment.replies?.length} {comment.replies?.length === 1 ? 'reply' : 'replies'}
+              </button>
+            )}
+          </div>
+          
+          {/* Reply form */}
+          {replyingTo === comment.id && (
+            <div className="mt-3 pt-3 border-t border-zinc-700">
+              <textarea
+                value={replyContent}
+                onChange={(e) => setReplyContent(e.target.value)}
+                rows={2}
+                placeholder="Write a reply..."
+                className="w-full px-3 py-2 bg-zinc-700 border border-zinc-600 rounded-lg text-white placeholder:text-zinc-400 focus:outline-none focus:border-violet-500 resize-none text-sm"
+              />
+              <div className="flex items-center gap-2 mt-2">
+                <button
+                  onClick={() => document.getElementById('reply-file-input')?.click()}
+                  className="flex items-center gap-1 text-xs text-zinc-400 hover:text-white"
+                >
+                  <ImageIcon className="h-3 w-3" /> Image
+                </button>
+                <input id="reply-file-input" type="file" accept="image/*" onChange={(e) => {
+                  if (e.target.files?.[0]) {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => setReplyImage(ev.target?.result as string);
+                    reader.readAsDataURL(e.target.files[0]);
+                  }
+                }} className="hidden" />
+                <button onClick={() => { addThreadComment(comment.id); }}
+                  disabled={!replyContent.trim()}
+                  className="px-3 py-1 text-xs bg-gradient-to-r from-violet-600 to-pink-600 rounded-lg disabled:opacity-50">
+                  Reply
+                </button>
+                <button onClick={() => { setReplyingTo(null); setReplyContent(''); setReplyImage(null); }}
+                  className="px-3 py-1 text-xs text-zinc-400 hover:text-white">
+                  Cancel
+                </button>
+              </div>
+              {replyImage && (
+                <img src={replyImage} alt="Preview" className="max-h-24 mt-2 rounded-lg" />
+              )}
+            </div>
+          )}
+        </div>
+        
+        {/* Nested replies */}
+        {hasReplies && isExpanded && (
+          <div className="mt-2">
+            {comment.replies?.map(reply => renderComment(reply, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   // Filter and sort
@@ -327,7 +531,7 @@ export default function LiarOrFire() {
             <h1 className="text-2xl font-bold bg-gradient-to-r from-orange-500 via-pink-500 to-purple-500 bg-clip-text text-transparent cursor-pointer" onClick={() => setSelectedPost(null)}>
               Liar or Fire
             </h1>
-            <span className="text-xs text-zinc-500 hidden sm:block">Is it worth the hype?</span>
+            <span className="text-xs text-zinc-500 hidden sm:block">Community • Threads</span>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative hidden md:block">
@@ -337,7 +541,8 @@ export default function LiarOrFire() {
             </div>
             {currentUser ? (
               <>
-                <button onClick={() => setShowCreatePost(true)} className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-pink-600 rounded-xl font-medium hover:opacity-90">
+                <button onClick={() => setShowCreatePost(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-pink-600 rounded-xl font-medium hover:opacity-90">
                   <Plus className="h-4 w-4" /><span className="hidden sm:inline">Post</span>
                 </button>
                 <button className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 relative">
@@ -356,7 +561,8 @@ export default function LiarOrFire() {
             ) : (
               <>
                 <button onClick={() => { setIsSignUp(false); setShowAuth(true); }} className="px-4 py-2 text-zinc-400 hover:text-white">Log in</button>
-                <button onClick={() => { setIsSignUp(true); setShowAuth(true); }} className="px-4 py-2 bg-gradient-to-r from-violet-600 to-pink-600 rounded-xl font-medium hover:opacity-90">Sign up</button>
+                <button onClick={() => { setIsSignUp(true); setShowAuth(true); }}
+                  className="px-4 py-2 bg-gradient-to-r from-violet-600 to-pink-600 rounded-xl font-medium hover:opacity-90">Sign up</button>
               </>
             )}
           </div>
@@ -411,6 +617,8 @@ export default function LiarOrFire() {
             const userVote = getUserVote(post.id);
             const total = totalVotes(post);
             const firePct = firePercentage(post);
+            const userHasReposted = hasReposted(post.id);
+            
             return (
               <article key={post.id} onClick={() => setSelectedPost(post)}
                 className="bg-zinc-900/50 border border-zinc-800 rounded-2xl overflow-hidden hover:border-zinc-700 transition-all cursor-pointer group">
@@ -462,11 +670,11 @@ export default function LiarOrFire() {
                       }`}>
                       <Pin className="h-4 w-4" /><span className="text-sm">Liar</span>
                     </button>
-                    <button onClick={(e) => { e.stopPropagation(); handleVote(post.id, 'trash'); }}
+                    <button onClick={(e) => { e.stopPropagation(); handleRepost(post.id); }}
                       className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all ${
-                        userVote === 'trash' ? 'bg-zinc-500/20 text-zinc-300 border border-zinc-500/50' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-300 hover:bg-zinc-700'
+                        userHasReposted ? 'bg-green-500/20 text-green-400 border border-green-500/50' : 'bg-zinc-800 text-zinc-400 hover:text-green-400 hover:bg-zinc-700'
                       }`}>
-                      <Trash2 className="h-4 w-4" />
+                      <Repeat2 className="h-4 w-4" /><span className="text-sm">{post.repostCount || 0}</span>
                     </button>
                     <span className="ml-auto flex items-center gap-1 text-zinc-500 text-sm">
                       <MessageSquare className="h-4 w-4" />{post.commentCount}
@@ -486,7 +694,7 @@ export default function LiarOrFire() {
         </div>
       </div>
 
-      {/* Create Post Modal */}
+      {/* Create Post Modal - same as before */}
       {showCreatePost && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-2xl my-8">
@@ -550,14 +758,6 @@ export default function LiarOrFire() {
                     placeholder="Apple, Sony, etc." className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:border-violet-500" />
                 </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-2">Product Link (Optional)</label>
-                <div className="relative">
-                  <LinkIcon className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
-                  <input type="url" value={newPost.productUrl} onChange={(e) => setNewPost({ ...newPost, productUrl: e.target.value })}
-                    placeholder="https://..." className="w-full pl-11 pr-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:border-violet-500" />
-                </div>
-              </div>
               <div className="flex gap-3 pt-4">
                 <button onClick={() => setShowCreatePost(false)} className="flex-1 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors">Cancel</button>
                 <button onClick={createPost} className="flex-1 px-4 py-3 rounded-xl bg-gradient-to-r from-violet-600 to-pink-600 hover:opacity-90">Post</button>
@@ -567,7 +767,7 @@ export default function LiarOrFire() {
         </div>
       )}
 
-      {/* Auth Modal */}
+      {/* Auth Modal - same as before */}
       {showAuth && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
@@ -605,15 +805,20 @@ export default function LiarOrFire() {
         </div>
       )}
 
-      {/* Post Detail Modal */}
+      {/* Post Detail Modal with Threaded Comments */}
       {selectedPost && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm p-4">
-          <div className="max-w-4xl mx-auto bg-zinc-900 border border-zinc-800 rounded-2xl my-8">
+          <div className="max-w-3xl mx-auto bg-zinc-900 border border-zinc-800 rounded-2xl my-8">
             <div className="sticky top-0 bg-zinc-900 border-b border-zinc-800 p-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Discussion</h2>
+              <div className="flex items-center gap-2">
+                <MessageSquare className="h-5 w-5 text-violet-400" />
+                <h2 className="text-lg font-semibold">Thread</h2>
+              </div>
               <button onClick={() => setSelectedPost(null)} className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700"><X className="h-5 w-5" /></button>
             </div>
+
             <div className="p-6">
+              {/* Original Post */}
               <div className="mb-6">
                 <h1 className="text-2xl font-bold mb-2">{selectedPost.title}</h1>
                 <p className="text-zinc-400 mb-4">{selectedPost.description}</p>
@@ -627,6 +832,8 @@ export default function LiarOrFire() {
                   <span>{formatDate(selectedPost.createdAt)}</span>
                 </div>
               </div>
+
+              {/* Vote Summary */}
               <div className="bg-zinc-800/50 rounded-xl p-4 mb-6">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-orange-400 font-medium">🔥 Fire ({selectedPost.fireVotes})</span>
@@ -638,48 +845,60 @@ export default function LiarOrFire() {
                   <div className="h-full bg-gradient-to-r from-red-500 to-pink-500" style={{ width: `${100 - firePercentage(selectedPost)}%` }} />
                 </div>
               </div>
+
+              {/* Add Comment */}
               <div className="mb-6">
-                <h3 className="font-semibold mb-3">Add Comment</h3>
+                <h3 className="font-semibold mb-3">Add to the discussion</h3>
                 <textarea value={newComment} onChange={(e) => setNewComment(e.target.value)} rows={3}
                   placeholder="Share your experience..."
                   className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl focus:outline-none focus:border-violet-500 resize-none" />
-                <div className="mt-2 flex items-center gap-2">
-                  <button onClick={() => document.getElementById('comment-file-input')?.click()}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm text-zinc-400">
-                    <ImageIcon className="h-4 w-4" /> Add Image
-                  </button>
-                  <input id="comment-file-input" type="file" accept="image/*" onChange={(e) => {
-                    if (e.target.files?.[0]) {
-                      const reader = new FileReader();
-                      reader.onload = (ev) => setCommentImage(ev.target?.result as string);
-                      reader.readAsDataURL(e.target.files[0]);
-                    }
-                  }} className="hidden" />
-                  {commentImage && <button onClick={() => setCommentImage(null)} className="text-sm text-red-400 hover:text-red-300">Remove</button>}
-                </div>
-                {commentImage && <img src={commentImage} alt="Preview" className="max-h-32 mt-2 rounded-lg" />}
-                <button onClick={addComment} disabled={!newComment.trim()}
-                  className="mt-2 px-4 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-pink-600 hover:opacity-90 disabled:opacity-50">
-                  Comment
-                </button>
-              </div>
-              <div className="space-y-4">
-                {comments.filter(c => c.postId === selectedPost.id).map((comment) => (
-                  <div key={comment.id} className="bg-zinc-800/50 rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="font-medium">u/{comment.authorUsername}</span>
-                      <span className="text-zinc-500 text-xs">• {formatDate(comment.createdAt)}</span>
-                    </div>
-                    <p className="text-zinc-300 mb-2">{comment.content}</p>
-                    {comment.imageUrl && <img src={comment.imageUrl} alt="Comment" className="max-w-md rounded-lg mb-2" />}
-                    <div className="flex items-center gap-4 text-sm">
-                      <button onClick={() => handleCommentVote(comment.id, 'fire')}
-                        className="flex items-center gap-1 text-zinc-500 hover:text-orange-400"><Flame className="h-4 w-4" />{comment.fireVotes}</button>
-                      <button onClick={() => handleCommentVote(comment.id, 'liar')}
-                        className="flex items-center gap-1 text-zinc-500 hover:text-red-400"><Pin className="h-4 w-4" />{comment.liarVotes}</button>
-                    </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => document.getElementById('comment-file-input')?.click()}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm text-zinc-400">
+                      <ImageIcon className="h-4 w-4" /> Add Image
+                    </button>
+                    <input id="comment-file-input" type="file" accept="image/*" onChange={(e) => {
+                      if (e.target.files?.[0]) {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => setCommentImage(ev.target?.result as string);
+                        reader.readAsDataURL(e.target.files[0]);
+                      }
+                    }} className="hidden" />
                   </div>
-                ))}
+                  <button onClick={() => addThreadComment(null)} disabled={!newComment.trim()}
+                    className="px-4 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-pink-600 hover:opacity-90 disabled:opacity-50">
+                    Comment
+                  </button>
+                </div>
+                {commentImage && (
+                  <div className="mt-2">
+                    <img src={commentImage} alt="Preview" className="max-h-32 rounded-lg" />
+                    <button onClick={() => setCommentImage(null)} className="text-sm text-red-400 hover:text-red-300 mt-1">Remove</button>
+                  </div>
+                )}
+              </div>
+
+              {/* Threaded Comments */}
+              <div>
+                <h3 className="font-semibold mb-4 flex items-center gap-2">
+                  Comments ({buildThreadedComments(selectedPost.id).reduce((acc, c) => acc + 1 + countReplies(c), 0)})
+                </h3>
+                
+                {buildThreadedComments(selectedPost.id).length === 0 ? (
+                  <div className="text-center py-8 text-zinc-500">
+                    <MessageSquare className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p>No comments yet. Be the first to share your thoughts!</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {buildThreadedComments(selectedPost.id).map(comment => (
+                      <div key={comment.id}>
+                        {renderComment(comment)}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -698,6 +917,7 @@ export default function LiarOrFire() {
               <button onClick={() => setShowAdmin(false)} className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700"><X className="h-5 w-5" /></button>
             </div>
             <div className="p-6">
+              {/* Stats */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
                 <div className="bg-zinc-800/50 rounded-xl p-4">
                   <div className="flex items-center gap-3">
@@ -724,6 +944,8 @@ export default function LiarOrFire() {
                   </div>
                 </div>
               </div>
+
+              {/* Posts Table */}
               <div className="mb-8">
                 <h3 className="text-lg font-semibold mb-4 flex items-center gap-2"><FileText className="h-5 w-5" /> Posts</h3>
                 <div className="overflow-x-auto">
@@ -760,6 +982,8 @@ export default function LiarOrFire() {
                   </table>
                 </div>
               </div>
+
+              {/* Users Table */}
               <div>
                 <h3 className="text-lg font-semibold mb-4 flex items-center gap-2"><Users className="h-5 w-5" /> Users</h3>
                 <div className="overflow-x-auto">
@@ -799,4 +1023,10 @@ export default function LiarOrFire() {
       )}
     </div>
   );
+
+  // Helper function to count nested replies
+  function countReplies(comment: ThreadComment): number {
+    if (!comment.replies || comment.replies.length === 0) return 0;
+    return comment.replies.reduce((acc, reply) => acc + 1 + countReplies(reply), 0);
+  }
 }
