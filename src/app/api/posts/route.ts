@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { posts, users, categories } from "@/lib/db/schema";
-import { eq, desc, sql, and } from "drizzle-orm";
-
-type Params = Promise<{ id: string }>;
+import { eq, desc, sql } from "drizzle-orm";
 
 // GET /api/posts - Get all posts with filtering
 export async function GET(request: NextRequest) {
@@ -45,16 +43,16 @@ export async function GET(request: NextRequest) {
 
     // Apply category filter
     if (category && category !== "all") {
-      query = query.where(eq(posts.categoryId, category));
+      query = query.where(eq(posts.categoryId, category)) as typeof query;
     }
 
     // Apply sorting
     if (sort === "hot") {
-      query = query.orderBy(desc(posts.totalVotes));
+      query = query.orderBy(desc(posts.totalVotes)) as typeof query;
     } else if (sort === "new") {
-      query = query.orderBy(desc(posts.createdAt));
+      query = query.orderBy(desc(posts.createdAt)) as typeof query;
     } else if (sort === "top") {
-      query = query.orderBy(desc(posts.fireVotes));
+      query = query.orderBy(desc(posts.fireVotes)) as typeof query;
     }
 
     const results = await query.limit(limit).offset(offset);
@@ -62,8 +60,8 @@ export async function GET(request: NextRequest) {
     // Calculate fire percentage for each post
     const postsWithPercentage = results.map((post) => ({
       ...post,
-      firePercentage: post.totalVotes > 0 
-        ? Math.round((post.fireVotes / post.totalVotes) * 100) 
+      firePercentage: (post.totalVotes ?? 0) > 0 
+        ? Math.round(((post.fireVotes ?? 0) / (post.totalVotes ?? 1)) * 100) 
         : 0,
     }));
 
@@ -77,7 +75,7 @@ export async function GET(request: NextRequest) {
 // POST /api/posts - Create a new post
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = auth();
+    const { userId } = await auth();
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -86,17 +84,19 @@ export async function POST(request: NextRequest) {
     const { title, description, categoryId, imageUrl, productUrl, price, brand } = body;
 
     // Get or create user
-    let [user] = await db.select().from(users).where(eq(users.clerkId, userId));
+    const existingUsers = await db.select().from(users).where(eq(users.clerkId, userId));
+    let user = existingUsers[0];
     
     if (!user) {
-      [user] = await db.insert(users).values({
+      const newUsers = await db.insert(users).values({
         clerkId: userId,
         username: `user_${Date.now()}`,
         email: "",
       }).returning();
+      user = newUsers[0];
     }
 
-    const [post] = await db.insert(posts).values({
+    const newPosts = await db.insert(posts).values({
       userId: user.id,
       title,
       description,
@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
       brand,
     }).returning();
 
-    return NextResponse.json({ post });
+    return NextResponse.json({ post: newPosts[0] });
   } catch (error) {
     console.error("Error creating post:", error);
     return NextResponse.json({ error: "Failed to create post" }, { status: 500 });

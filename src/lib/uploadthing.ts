@@ -4,13 +4,13 @@ import { auth } from "@clerk/nextjs/server";
 const f = createUploadthing();
 
 const handleAuth = async () => {
-  const { userId } = auth();
+  const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
   return { userId };
 };
 
 export const ourFileRouter = {
-  postImage: f({ image: { maxFileSize: "10MB", maxFileCount: 1 } })
+  postImage: f({ image: { maxFileSize: "4MB", maxFileCount: 1 } })
     .middleware(() => handleAuth())
     .onUploadComplete(({ metadata, file }) => {
       console.log("Upload complete for userId:", metadata.userId);
@@ -18,7 +18,7 @@ export const ourFileRouter = {
       return { uploadedBy: metadata.userId };
     }),
   
-  commentImage: f({ image: { maxFileSize: "5MB", maxFileCount: 1 } })
+  commentImage: f({ image: { maxFileSize: "4MB", maxFileCount: 1 } })
     .middleware(() => handleAuth())
     .onUploadComplete(({ metadata, file }) => {
       console.log("Upload complete for userId:", metadata.userId);

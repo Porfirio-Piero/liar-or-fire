@@ -38,7 +38,7 @@ export const posts = pgTable("posts", {
   brand: text("brand"),
   fireVotes: integer("fire_votes").default(0),
   liarVotes: integer("liar_votes").default(0),
-  trashVotes: integer("trash_votes").default(0),
+  trashVote: integer("trash_votes").default(0),
   totalVotes: integer("total_votes").default(0),
   commentCount: integer("comment_count").default(0),
   isPinned: boolean("is_pinned").default(false),
@@ -52,7 +52,7 @@ export const comments = pgTable("comments", {
   id: uuid("id").primaryKey().defaultRandom(),
   postId: uuid("post_id").references(() => posts.id).notNull(),
   userId: uuid("user_id").references(() => users.id).notNull(),
-  parentId: uuid("parent_id").references(() => comments.id),
+  parentId: uuid("parent_id"),
   content: text("content").notNull(),
   imageUrl: text("image_url"),
   fireVotes: integer("fire_votes").default(0),
@@ -104,11 +104,9 @@ export const commentsRelations = relations(comments, ({ one, many }) => ({
     fields: [comments.userId],
     references: [users.id],
   }),
-  parent: one(comments, {
-    fields: [comments.parentId],
-    references: [comments.id],
+  replies: many(comments, {
+    relationName: "parentComment",
   }),
-  replies: many(comments),
 }));
 
 export const votesRelations = relations(votes, ({ one }) => ({

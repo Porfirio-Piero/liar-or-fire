@@ -45,7 +45,7 @@ export async function POST(
   { params }: { params: Params }
 ) {
   try {
-    const { userId } = auth();
+    const { userId } = await auth();
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -55,17 +55,19 @@ export async function POST(
     const { content, imageUrl, parentId } = body;
 
     // Get or create user
-    let [user] = await db.select().from(users).where(eq(users.clerkId, userId));
+    const existingUsers = await db.select().from(users).where(eq(users.clerkId, userId));
+    let user = existingUsers[0];
     
     if (!user) {
-      [user] = await db.insert(users).values({
+      const newUsers = await db.insert(users).values({
         clerkId: userId,
         username: `user_${Date.now()}`,
         email: "",
       }).returning();
+      user = newUsers[0];
     }
 
-    const [comment] = await db.insert(comments).values({
+    const newComments = await db.insert(comments).values({
       postId: id,
       userId: user.id,
       content,
@@ -79,7 +81,7 @@ export async function POST(
       .set({ commentCount: sql`${posts.commentCount} + 1` })
       .where(eq(posts.id, id));
 
-    return NextResponse.json({ comment });
+    return NextResponse.json({ comment: newComments[0] });
   } catch (error) {
     console.error("Error creating comment:", error);
     return NextResponse.json({ error: "Failed to create comment" }, { status: 500 });
