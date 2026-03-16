@@ -75,11 +75,14 @@ export async function POST(
       parentId,
     }).returning();
 
-    // Update post comment count
-    await db
-      .update(posts)
-      .set({ commentCount: sql`${posts.commentCount} + 1` })
-      .where(eq(posts.id, id));
+    // Update post comment count (simple increment)
+    const currentPosts = await db.select().from(posts).where(eq(posts.id, id));
+    if (currentPosts[0]) {
+      await db
+        .update(posts)
+        .set({ commentCount: (currentPosts[0].commentCount ?? 0) + 1 })
+        .where(eq(posts.id, id));
+    }
 
     return NextResponse.json({ comment: newComments[0] });
   } catch (error) {
