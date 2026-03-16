@@ -38,7 +38,7 @@ export const posts = pgTable("posts", {
   brand: text("brand"),
   fireVotes: integer("fire_votes").default(0),
   liarVotes: integer("liar_votes").default(0),
-  trashVote: integer("trash_votes").default(0),
+  trashVotes: integer("trash_votes").default(0),
   totalVotes: integer("total_votes").default(0),
   commentCount: integer("comment_count").default(0),
   isPinned: boolean("is_pinned").default(false),
