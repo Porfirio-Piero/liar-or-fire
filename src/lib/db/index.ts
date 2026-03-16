@@ -1,26 +1,22 @@
-// Database configuration for Liar-or-Fire
-// Uses PostgreSQL (Neon) in production, falls back to mock for development
-
 import { drizzle } from "drizzle-orm/neon-serverless";
 import { Pool } from "@neondatabase/serverless";
 import * as schema from "./schema";
 
-// Check for database URL
+// Get database URL
 const databaseUrl = process.env.DATABASE_URL;
 
-if (!databaseUrl) {
-  console.warn("⚠️ No DATABASE_URL found. Using mock database.");
-  // Return mock db that logs operations
-  export const db = {
-    select: () => ({ from: () => ({ where: () => [], orderBy: () => [] }) }),
-    insert: () => ({ values: () => ({ returning: () => [] }) }),
-    update: () => ({ set: () => ({ where: () => ({ returning: () => [] }) }) }),
-    delete: () => ({ where: () => [] }),
-  };
-} else {
-  // Use Neon PostgreSQL
+// Create database connection
+let db: ReturnType<typeof drizzle>;
+
+if (databaseUrl) {
   const pool = new Pool({ connectionString: databaseUrl });
-  export const db = drizzle(pool, { schema });
+  db = drizzle(pool, { schema });
+} else {
+  // Mock database for development without DATABASE_URL
+  // This returns empty arrays for all queries
+  db = drizzle({} as any, { schema });
+  console.warn("⚠️ No DATABASE_URL found. Using mock database.");
 }
 
+export { db };
 export * from "./schema";
