@@ -1,0 +1,150 @@
+@import "tailwindcss";
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 262 83% 58%;
+  --radius: 0.75rem;
+  
+  --fire: 25 95% 53%;
+  --fire-glow: 25 100% 50%;
+  --liar: 350 89% 60%;
+  --liar-glow: 350 100% 65%;
+  --trash: 0 0% 30%;
+}
+
+.dark {
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 262 83% 58%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+/* Fire glow effect */
+.fire-glow {
+  box-shadow: 
+    0 0 20px hsl(var(--fire) / 40%),
+    0 0 40px hsl(var(--fire) / 20%),
+    0 0 60px hsl(var(--fire) / 10%);
+}
+
+/* Liar glow effect */
+.liar-glow {
+  box-shadow: 
+    0 0 20px hsl(var(--liar) / 40%),
+    0 0 40px hsl(var(--liar) / 20%),
+    0 0 60px hsl(var(--liar) / 10%);
+}
+
+/* Gradient mesh background */
+.gradient-mesh {
+  background:
+    radial-gradient(at 40% 20%, hsla(262, 83%, 58%, 0.3) 0px, transparent 50%),
+    radial-gradient(at 80% 0%, hsla(189, 83%, 58%, 0.3) 0px, transparent 50%),
+    radial-gradient(at 0% 50%, hsla(355, 83%, 58%, 0.2) 0px, transparent 50%),
+    radial-gradient(at 80% 50%, hsla(340, 83%, 58%, 0.2) 0px, transparent 50%);
+}
+
+/* Glass effect */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Vote button animations */
+.vote-btn {
+  transition: all 0.2s ease;
+}
+
+.vote-btn:hover {
+  transform: scale(1.1);
+}
+
+.vote-btn:active {
+  transform: scale(0.95);
+}
+
+.vote-btn.fire:hover {
+  background: linear-gradient(135deg, #f97316, #ef4444);
+  box-shadow: 0 0 30px rgba(249, 115, 22, 0.5);
+}
+
+.vote-btn.liar:hover {
+  background: linear-gradient(135deg, #8b5cf6, #ec4899);
+  box-shadow: 0 0 30px rgba(139, 92, 246, 0.5);
+}
+
+.vote-btn.trash:hover {
+  background: linear-gradient(135deg, #6b7280, #374151);
+  box-shadow: 0 0 30px rgba(107, 114, 128, 0.5);
+}
+
+/* Animations */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-shake {
+  animation: shake 0.5s ease-in-out;
+}
